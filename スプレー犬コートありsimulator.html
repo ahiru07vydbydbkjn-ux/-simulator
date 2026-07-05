@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>スプレー浸透シミュレーター (ホロコーン演出・深度モデル厳密化)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: #f0f2f5;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .controls {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: flex-start;
+            width: 1000px;
+            box-sizing: border-box;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            min-width: 140px;
+        }
+        label {
+            font-weight: bold;
+            margin-bottom: 8px;
+            font-size: 13px;
+            color: #444;
+        }
+        .btn-group {
+            display: flex;
+            gap: 5px;
+        }
+        button {
+            padding: 8px 10px;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-weight: bold;
+            background-color: #f9f9f9;
+            color: #333;
+            transition: all 0.2s;
+            font-size: 13px;
+        }
+        button.active {
+            background-color: #2196F3;
+            color: white;
+            border-color: #2196F3;
+        }
+        input[type="range"] {
+            width: 100%;
+        }
+        #canvas-container {
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            background-color: #1a1a24;
+        }
+        .action-btns {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            min-width: 120px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <div class="control-group" style="flex: 2;">
+            <label>スプレーパターンの種類</label>
+            <div class="btn-group">
+                <button id="btnFlat" class="active">フラット (扇形)</button>
+                <button id="btnFull">フルコーン</button>
+                <button id="btnHollow">ホロコーン</button>
+                <button id="btnStraight">ストレート</button>
+            </div>
+        </div>
+        <div class="control-group" style="flex: 1.5;">
+            <label for="sprayPressure">噴射圧力: <span id="pressureLabel">10</span> MPa</label>
+            <input type="range" id="sprayPressure" min="2" max="20" value="10" step="1">
+        </div>
+        <div class="control-group" style="flex: 1.5;">
+            <label for="nozzleX">ノズル X軸 (左右): <span id="nozzleXLabel">0</span></label>
+            <input type="range" id="nozzleX" min="-160" max="160" value="0" step="1">
+        </div>
+        <div class="control-group" style="flex: 1.5;">
+            <label for="nozzleY">ノズル Y軸 (距離): <span id="nozzleYLabel">0</span></label>
+            <input type="range" id="nozzleY" min="0" max="90" value="0" step="1">
+        </div>
+        <div class="action-btns">
+            <button id="btnPush" style="background-color: #4CAF50; color: white; border: none; padding: 12px;">💨 1プッシュ噴射</button>
+            <button id="btnClear" style="background-color: #ff5252; color: white; border: none;">リセット (乾かす)</button>
+        </div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <script>
+        let hairs = [];
+        let numHairs = 0; 
+        let particles = [];
+        
+        let nozzleType = 'flat'; 
+        let pressure = 10;
+        let angleDeg = 50;
+
+        let nozzleOffsetX = 0;
+        let nozzleOffsetY = 0;
+        let sprayTimer = 0; 
+
+        // 空間パラメータ（被毛長2/3）
+        const skinY = 400;      
+        const hairTopY = 233;   
+        const leftCX = 250;     
+        const rightCX = 750;    
+        const rightCY = 250;    
+
+        function setup() {
+            let canvas = createCanvas(1000, 500);
+            canvas.parent('canvas-container');
+
+            select('#btnFlat').mousePressed(() => setNozzle('flat', '#btnFlat'));
+            select('#btnFull').mousePressed(() => setNozzle('full', '#btnFull'));
+            select('#btnHollow').mousePressed(() => setNozzle('hollow', '#btnHollow'));
+            select('#btnStraight').mousePressed(() => setNozzle('straight', '#btnStraight'));
+            select('#btnClear').mousePressed(clearSimulation);
+            select('#btnPush').mousePressed(pushSpray);
+            
+            select('#sprayPressure').input(updatePressure);
+            select('#nozzleX').input(updateNozzleX);
+            select('#nozzleY').input(updateNozzleY);
+
+            generateCoat();
+        }
+
+        function draw() {
+            background(20, 22, 30);
+
+            // 画面分割線
+            stroke(60);
+            strokeWeight(2);
+            line(500, 0, 500, height);
+            
+            fill(255);
+            noStroke();
+            textSize(14);
+            textAlign(LEFT, TOP);
+            text("側面図 (ホロ=表面, フル=中間, ストレート=皮膚まで浸透)", 20, 20);
+            text("上面図 (ホロコーンのドーナツ状リングを確認)", 520, 20);
+
+            // ==========================================
+            // 側面図 (左側)
+            // ==========================================
+            fill(220, 180, 160);
+            rect(leftCX - 220, 50 + skinY, 440, 50);
+
+            strokeWeight(1.2);
+            for (let i = 0; i < numHairs; i++) {
+                let h = hairs[i];
+                if (h.isSideVisible) { 
+                    stroke(120, 95, 75, h.sideAlpha);
+                    line(leftCX + h.x, 50 + skinY, leftCX + h.topX, 50 + hairTopY);
+                }
+            }
+
+            let nx = leftCX + nozzleOffsetX;
+            let ny = 30 + nozzleOffsetY;
+            fill(180);
+            noStroke();
+            rect(nx - 15, ny, 30, 20, 3);
+            fill(120);
+            rect(nx - 5, ny + 20, 10, 10);
+
+            // ==========================================
+            // 上面図 (右側)
+            // ==========================================
+            fill(220, 180, 160);
+            ellipse(rightCX, rightCY, 400, 400);
+
+            stroke(90, 70, 50, 100);
+            strokeWeight(1);
+            for (let i = 0; i < numHairs; i++) {
+                let h = hairs[i];
+                line(rightCX + h.x, rightCY + h.z, rightCX + h.topX, rightCY + h.topZ);
+            }
+
+            fill(255, 50, 50, 200);
+            noStroke();
+            ellipse(rightCX + nozzleOffsetX, rightCY, 8, 8);
+            stroke(255, 50, 50, 100);
+            noFill();
+            ellipse(rightCX + nozzleOffsetX, rightCY, 30, 30);
+
+            // ==========================================
+            // パーティクル処理
+            // ==========================================
+            if (sprayTimer > 0) {
+                // ホロコーンは霧が細かいので生成数を増やしてリングを分かりやすくする
+                let spawnRate = nozzleType === 'hollow' ? 30 : 8; 
+                for (let i = 0; i < spawnRate; i++) {
+                    spawnParticle();
+                }
+                sprayTimer--;
+            }
+
+            if (particles.length > 2000) {
+                particles.splice(0, particles.length - 2000);
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.update();
+                p.display();
+            }
+        }
+
+        function generateCoat() {
+            hairs = [];
+            for (let i = 0; i < 1000; i++) {
+                let r = sqrt(random()) * 200;
+                let theta = random(TWO_PI);
+                let px = cos(theta) * r;
+                let pz = sin(theta) * r;
+                let tx = random(-20, 20);
+                let tz = random(-20, 20);
+                
+                let zDist = abs(pz);
+                let isSideVisible = zDist < 120;
+                let sideAlpha = isSideVisible ? map(zDist, 0, 120, 180, 10) : 0;
+
+                hairs.push({ 
+                    x: px, 
+                    z: pz, 
+                    tiltX: tx, 
+                    tiltZ: tz,
+                    topX: px + tx,
+                    topZ: pz + tz,
+                    isSideVisible: isSideVisible,
+                    sideAlpha: sideAlpha
+                });
+            }
+            numHairs = hairs.length;
+        }
+
+        function pushSpray() {
+            sprayTimer = 15; 
+        }
+
+        function spawnParticle() {
+            let baseSpeed = map(pressure, 2, 20, 8, 25);
+            let speed = baseSpeed + random(-2, 2); 
+            let angleRad = radians(angleDeg) / 2; 
+            let maxSpread = tan(angleRad); 
+
+            let vx = 0, vy = 0, vz = 0;
+            let particleSize = 1;
+
+            switch (nozzleType) {
+                case 'flat':
+                    vx = random(-maxSpread, maxSpread) * speed;
+                    vz = random(-0.05, 0.05) * speed; 
+                    vy = speed;
+                    // 中間層まで届く質量
+                    particleSize = map(pressure, 2, 20, 3.5, 4.5); 
+                    break;
+                case 'full':
+                    let r_f = sqrt(random()) * maxSpread;
+                    let th_f = random(TWO_PI);
+                    vx = cos(th_f) * r_f * speed;
+                    vz = sin(th_f) * r_f * speed;
+                    vy = speed;
+                    // 中間層付近で止まる質量
+                    particleSize = map(pressure, 2, 20, 3.0, 4.0); 
+                    break;
+                case 'hollow':
+                    // 【演出強化】ドーナツ状（空円錐）を強調するため、外周(80%〜100%)の範囲のみに限定
+                    let r_h = maxSpread * random(0.8, 1.0); 
+                    let th_h = random(TWO_PI);
+                    vx = cos(th_h) * r_h * speed;
+                    vz = sin(th_h) * r_h * speed;
+                    // フワッとした霧のため初期速度も遅め
+                    vy = speed * 0.6; 
+                    // 【演出強化】毛先で確実に止まるように非常に軽い質量に設定
+                    particleSize = 1.2; 
+                    break;
+                case 'straight':
+                    vx = random(-0.02, 0.02) * speed;
+                    vz = random(-0.02, 0.02) * speed;
+                    vy = speed * 1.2;
+                    // 皮膚まで一気に貫通する大きな質量
+                    particleSize = 8.0; 
+                    break;
+            }
+
+            particles.push(new Particle(nozzleOffsetX, 50 + nozzleOffsetY, 0, vx, vy, vz, particleSize));
+        }
+
+        class Particle {
+            constructor(x, y, z, vx, vy, vz, size) {
+                this.x = x;
+                this.y = y;
+                this.z = z;
+                this.vx = vx;
+                this.vy = vy;
+                this.vz = vz;
+                this.size = size; 
+                this.attachedHair = null; 
+                this.hitSkin = false;
+            }
+
+            update() {
+                if (!this.attachedHair && !this.hitSkin) {
+                    this.vy += 0.5; // 重力
+
+                    if (this.y > hairTopY && this.y - this.vy <= hairTopY) {
+                        this.y = hairTopY;
+                        this.vy = 0;
+                        this.attachToNearestHairTop();
+                    } 
+                    else if (this.y > hairTopY) {
+                        let depthRatio = (this.y - hairTopY) / (skinY - hairTopY);
+                        if (depthRatio < 0) depthRatio = 0;
+                        if (depthRatio > 1) depthRatio = 1;
+
+                        // 空気・毛の密度による減速
+                        let resistance = (3.5 / this.size) + (depthRatio * 2.5); 
+                        this.vy -= resistance;
+                        this.vx *= 0.75; 
+                        this.vz *= 0.75;
+
+                        // ストレート以外は途中で失速し付着
+                        if (this.vy <= 0.5 && nozzleType !== 'straight') {
+                            this.vy = 0;
+                            this.attachToNearestHairShaft(); 
+                        } else if (this.vy <= 0) { 
+                            this.vy = 0;
+                            this.attachToNearestHairShaft(); 
+                        }
+                    }
+
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    this.z += this.vz;
+
+                    if (this.y >= skinY) {
+                        this.y = skinY;
+                        this.hitSkin = true;
+                    }
+                } 
+                // 毛に付着後（滑り落ち判定）
+                else if (this.attachedHair) {
+                    let waterMass = this.size; 
+                    
+                    let depthRatio = (this.y - hairTopY) / (skinY - hairTopY);
+                    if (depthRatio < 0) depthRatio = 0;
+                    if (depthRatio > 1) depthRatio = 1;
+                    
+                    // 【物理法則の厳密化】
+                    // 表面付近の付着力 = 2.0（ホロコーンの質量1.2はこれに負けて表面に留まる）
+                    // 中間付近の付着力 = 4.0（フル・フラットの質量3.5はこの付近で負けて留まる）
+                    // 根元付近の付着力 = 6.0（ストレートの質量8.0はすべて振り切って皮膚へ到達する）
+                    let adhesionForce = 2.0 + (depthRatio * 4.0); 
+                    
+                    if (waterMass > adhesionForce) {
+                        let slideSpeed = (waterMass - adhesionForce) * 0.15; 
+                        this.y += slideSpeed;
+
+                        if (this.y >= skinY) {
+                            this.y = skinY;
+                            this.hitSkin = true;
+                            this.attachedHair = null; 
+                        } else {
+                            let u = (skinY - this.y) / (skinY - hairTopY);
+                            if (u < 0) u = 0; else if (u > 1) u = 1;
+                            this.x = this.attachedHair.x + u * this.attachedHair.tiltX;
+                            this.z = this.attachedHair.z + u * this.attachedHair.tiltZ;
+                        }
+                    }
+                }
+            }
+
+            attachToNearestHairTop() {
+                let minDistSq = Infinity;
+                let closest = null;
+                for (let i = 0; i < numHairs; i++) {
+                    let h = hairs[i];
+                    let dx = this.x - h.topX;
+                    let dz = this.z - h.topZ;
+                    let dSq = dx * dx + dz * dz; 
+                    if (dSq < minDistSq) {
+                        minDistSq = dSq;
+                        closest = h;
+                    }
+                }
+                if (closest) {
+                    this.attachedHair = closest;
+                    this.x = closest.topX;
+                    this.z = closest.topZ;
+                    this.y = hairTopY; 
+                }
+            }
+
+            attachToNearestHairShaft() {
+                let minDistSq = Infinity;
+                let closest = null;
+                let u = (skinY - this.y) / (skinY - hairTopY);
+                if (u < 0) u = 0; else if (u > 1) u = 1;
+                
+                for (let i = 0; i < numHairs; i++) {
+                    let h = hairs[i];
+                    let currHx = h.x + u * h.tiltX;
+                    let currHz = h.z + u * h.tiltZ;
+                    let dx = this.x - currHx;
+                    let dz = this.z - currHz;
+                    let dSq = dx * dx + dz * dz; 
+                    if (dSq < minDistSq) {
+                        minDistSq = dSq;
+                        closest = h;
+                    }
+                }
+                if (closest) {
+                    this.attachedHair = closest;
+                    this.x = closest.x + u * closest.tiltX;
+                    this.z = closest.z + u * closest.tiltZ;
+                }
+            }
+
+            display() {
+                noStroke();
+                let zDist = abs(this.z);
+                if (zDist < 120) {
+                    let alpha = map(zDist, 0, 120, 255, 30);
+                    
+                    if (this.hitSkin) {
+                        fill(70, 170, 230, alpha); 
+                    } else if (this.attachedHair) {
+                        fill(160, 230, 245, alpha); 
+                    } else {
+                        // ホロコーンの飛翔中は霧っぽさを出すため半透明に
+                        let flyAlpha = nozzleType === 'hollow' ? alpha * 0.4 : alpha * 0.7;
+                        fill(200, 240, 255, flyAlpha); 
+                    }
+
+                    let renderSize = this.attachedHair ? this.size * 1.8 : this.size * 1.2;
+                    // ホロコーンの表面ビーズはやや大きめに描画して分かりやすくする
+                    if (this.attachedHair && this.size === 1.2) renderSize = 2.5; 
+                    
+                    if (renderSize < 1) renderSize = 1; else if (renderSize > 12) renderSize = 12;
+                    ellipse(leftCX + this.x, 50 + this.y, renderSize, renderSize);
+                }
+
+                if (this.attachedHair || this.hitSkin) {
+                    if (this.hitSkin) fill(70, 170, 230, 200); 
+                    else fill(160, 230, 245, 180); 
+                    
+                    let renderSize = this.size * 1.5;
+                    if (this.attachedHair && this.size === 1.2) renderSize = 3.0; // 上面図でも霧を少し目立たせる
+                    if (renderSize < 1) renderSize = 1; else if (renderSize > 10) renderSize = 10;
+                    ellipse(rightCX + this.x, rightCY + this.z, renderSize, renderSize);
+                }
+            }
+        }
+
+        function setNozzle(type, btnId) {
+            nozzleType = type;
+            selectAll('.btn-group button').forEach(b => b.removeClass('active'));
+            select(btnId).addClass('active');
+        }
+        function updatePressure() {
+            pressure = parseInt(this.value());
+            select('#pressureLabel').html(pressure);
+        }
+        function updateNozzleX() {
+            nozzleOffsetX = parseInt(this.value());
+            select('#nozzleXLabel').html(nozzleOffsetX);
+        }
+        function updateNozzleY() {
+            nozzleOffsetY = parseInt(this.value());
+            select('#nozzleYLabel').html(nozzleOffsetY);
+        }
+        function clearSimulation() {
+            particles = [];
+        }
+    </script>
+</body>
+</html>
