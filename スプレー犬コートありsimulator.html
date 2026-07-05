@@ -67,8 +67,22 @@
             gap: 8px;
             min-width: 120px;
         }
+
+        #simOuter {
+            overflow: hidden;
+        }
+        #simWrapper {
+            width: 1000px;
+            transform-origin: top left;
+        }
+        @media (max-width: 600px) {
+            body {
+                padding: 8px;
+            }
+        }
     </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+<div id="simOuter"><div id="simWrapper">
 <div class="controls">
         <div class="control-group" style="flex: 2;">
             <label>スプレーパターンの種類</label>
@@ -97,6 +111,7 @@
         </div>
     </div>
 <div id="canvas-container"></div>
+</div></div>
 <script>
         let hairs = [];
         let numHairs = 0; 
@@ -133,7 +148,23 @@
             select('#nozzleY').input(updateNozzleY);
 
             generateCoat();
+            fitSimulator();
         }
+
+        function fitSimulator() {
+            const outer = document.getElementById('simOuter');
+            const wrapper = document.getElementById('simWrapper');
+            if (!outer || !wrapper) return;
+            const naturalWidth = 1000;
+            const naturalHeight = wrapper.scrollHeight || 500;
+            const available = Math.min(window.innerWidth, document.documentElement.clientWidth) - 4;
+            const scale = Math.min(1, available / naturalWidth);
+            wrapper.style.transform = 'scale(' + scale + ')';
+            outer.style.width = Math.round(naturalWidth * scale) + 'px';
+            outer.style.height = Math.round(naturalHeight * scale) + 'px';
+        }
+        window.addEventListener('resize', fitSimulator);
+        window.addEventListener('orientationchange', fitSimulator);
 
         function draw() {
             background(20, 22, 30);
