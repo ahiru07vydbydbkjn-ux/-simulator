@@ -1,10 +1,4 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-    <meta charset="UTF-8">
-    <title>スプレー浸透シミュレーター (ホロコーン演出・深度モデル厳密化)</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
-    <style>
+<style>
         body {
             font-family: 'Helvetica Neue', Arial, sans-serif;
             background-color: #f0f2f5;
@@ -74,10 +68,8 @@
             min-width: 120px;
         }
     </style>
-</head>
-<body>
-
-    <div class="controls">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.6.0/p5.js"></script>
+<div class="controls">
         <div class="control-group" style="flex: 2;">
             <label>スプレーパターンの種類</label>
             <div class="btn-group">
@@ -104,10 +96,8 @@
             <button id="btnClear" style="background-color: #ff5252; color: white; border: none;">リセット (乾かす)</button>
         </div>
     </div>
-
-    <div id="canvas-container"></div>
-
-    <script>
+<div id="canvas-container"></div>
+<script>
         let hairs = [];
         let numHairs = 0; 
         let particles = [];
@@ -494,5 +484,3 @@
             particles = [];
         }
     </script>
-</body>
-</html>
